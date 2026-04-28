@@ -2,7 +2,6 @@ import { useState } from 'react';
 import { useCurrentAccount, ConnectButton } from '@mysten/dapp-kit';
 import { MultiSigPublicKey } from '@mysten/sui/multisig';
 import { Ed25519PublicKey } from '@mysten/sui/keypairs/ed25519';
-import { Secp256k1PublicKey } from '@mysten/sui/keypairs/secp256k1';
 import { ZkLoginPublicIdentifier } from '@mysten/sui/zklogin';
 import { fromBase64, toBase64 } from '@mysten/sui/utils';
 
@@ -22,18 +21,19 @@ function getWalletPublicKey(account: any) {
   const pubKeyBytes = new Uint8Array(account.publicKey);
   const targetAddress = account.address;
 
-  // 尝试不同的解析器
+  // 尝试解析为 Ed25519
   try {
     const edKey = new Ed25519PublicKey(pubKeyBytes);
     if (edKey.toSuiAddress() === targetAddress) return edKey;
   } catch {}
 
+  // 尝试解析为 zkLogin
   try {
     const zkKey = new ZkLoginPublicIdentifier(pubKeyBytes);
     if (zkKey.toSuiAddress() === targetAddress) return zkKey;
   } catch {}
 
-  throw new Error("无法识别当前钱包的公钥类型");
+  throw new Error("无法识别当前钱包的公钥类型 (仅支持 Ed25519 和 zkLogin)");
 }
 
 export function MultisigGenerator() {
