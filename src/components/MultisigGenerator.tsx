@@ -7,7 +7,6 @@ import { Secp256r1PublicKey } from '@mysten/sui/keypairs/secp256r1';
 import { ZkLoginPublicIdentifier } from '@mysten/sui/zklogin';
 import { fromBase64, toBase64 } from '@mysten/sui/utils';
 
-// 工具函数：处理外部输入的 Base64 公钥 (修复 33 字节问题)
 function normalizeToPureEd25519(base64Str: string): Ed25519PublicKey {
   const bytes = fromBase64(base64Str);
   const pureBytes = (bytes.length === 33 && bytes[0] === 0) ? bytes.slice(1) : bytes;
@@ -17,37 +16,39 @@ function normalizeToPureEd25519(base64Str: string): Ed25519PublicKey {
   return new Ed25519PublicKey(pureBytes);
 }
 
-// 终极钱包公钥解析器：通吃所有类型和长度规范
+// 终极防弹版钱包解析器
 function getWalletPublicKey(account: any) {
   const originalBytes = new Uint8Array(account.publicKey);
   const targetAddress = account.address;
 
-  // 某些钱包可能传过来 33 字节(包含标志位)，我们切出 32 字节的核心备用
-  const pureBytes = originalBytes.length === 33 ? originalBytes.slice(1) : originalBytes;
+  // 核心修复：把“带标志位(原始)”和“切除标志位(slice(1))”两种情况列为候选名单
+  const candidates = [
+    originalBytes,         
+    originalBytes.slice(1) 
+  ];
 
-  // 1. 尝试 Ed25519
-  try {
-    const edKey = new Ed25519PublicKey(pureBytes);
-    if (edKey.toSuiAddress() === targetAddress) return edKey;
-  } catch {}
+  // 遍历所有可能性，让底层的哈希算法去验证哪个是对的
+  for (const bytes of candidates) {
+    try {
+      const edKey = new Ed25519PublicKey(bytes);
+      if (edKey.toSuiAddress() === targetAddress) return edKey;
+    } catch {}
 
-  // 2. 尝试 Secp256k1
-  try {
-    const secpKey = new Secp256k1PublicKey(pureBytes);
-    if (secpKey.toSuiAddress() === targetAddress) return secpKey;
-  } catch {}
+    try {
+      const zkKey = new ZkLoginPublicIdentifier(bytes);
+      if (zkKey.toSuiAddress() === targetAddress) return zkKey;
+    } catch {}
 
-  // 3. 尝试 Secp256r1
-  try {
-    const r1Key = new Secp256r1PublicKey(pureBytes);
-    if (r1Key.toSuiAddress() === targetAddress) return r1Key;
-  } catch {}
+    try {
+      const secpKey = new Secp256k1PublicKey(bytes);
+      if (secpKey.toSuiAddress() === targetAddress) return secpKey;
+    } catch {}
 
-  // 4. 尝试 zkLogin (zkLogin 标识符字节较长，直接使用原始字节)
-  try {
-    const zkKey = new ZkLoginPublicIdentifier(originalBytes);
-    if (zkKey.toSuiAddress() === targetAddress) return zkKey;
-  } catch {}
+    try {
+      const r1Key = new Secp256r1PublicKey(bytes);
+      if (r1Key.toSuiAddress() === targetAddress) return r1Key;
+    } catch {}
+  }
 
   throw new Error(`无法匹配当前钱包地址。底层字节长度为: ${originalBytes.length}`);
 }
@@ -75,6 +76,8 @@ export function MultisigGenerator() {
     try {
       const pubKey1 = normalizeToPureEd25519(pk1);
       const pubKey2 = normalizeToPureEd25519(pk2);
+      
+      // 这里的 61 字节 zkLogin 公钥会被完美解析
       const walletPubKey = getWalletPublicKey(account);
 
       const multiSigPublicKey = MultiSigPublicKey.fromPublicKeys({
@@ -89,7 +92,7 @@ export function MultisigGenerator() {
       setResult({
         address: multiSigPublicKey.toSuiAddress(),
         keys: [
-          toBase64(walletPubKey.toRawBytes()), // 钱包实际使用的公钥
+          toBase64(walletPubKey.toRawBytes()),
           toBase64(pubKey1.toRawBytes()),
           toBase64(pubKey2.toRawBytes()),
         ]
