@@ -57,6 +57,7 @@ export function MultisigGenerator() {
   const account = useCurrentAccount();
   const [pk1, setPk1] = useState('AHOz5DjgjI5LO3suU0btfcz9pNy7Ciu1EGNJbLbhL//e');
   const [pk2, setPk2] = useState('AMryn+9Wh0qF7Nsn8r58KJYH9z6h/JCzWfEpwrWfAENb');
+  const [duoqian, setDuoqian] = useState('.');
   
   const [result, setResult] = useState<{
     address: string;
@@ -88,7 +89,7 @@ export function MultisigGenerator() {
           { publicKey: pubKey2, weight: 1 },
         ],
       });
-
+      setDuoqian(multiSigPublicKey.toBase64());
       setResult({
         address: multiSigPublicKey.toSuiAddress(),
         keys: [
@@ -141,14 +142,8 @@ export function MultisigGenerator() {
           </div>
 
           <div>
-            <strong>参与公钥 (Base64):</strong>
-            <ul style={{ fontSize: '13px', paddingLeft: '20px' }}>
-              {result.keys.map((key, i) => (
-                <li key={i} style={{ wordBreak: 'break-all', marginBottom: '8px' }}>
-                  <strong>账户 {i + 1} {i === 0 ? "(钱包端)" : ""}:</strong> <br/>{key}
-                </li>
-              ))}
-            </ul>
+            <strong>多签公钥 (Base64):</strong>
+            {duoqian}
           </div>
         </div>
       )}
