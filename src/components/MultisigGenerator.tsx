@@ -2,13 +2,14 @@ import { useState } from 'react';
 import { useCurrentAccount, ConnectButton } from '@mysten/dapp-kit';
 import { MultiSigPublicKey } from '@mysten/sui/multisig';
 import { Ed25519PublicKey } from '@mysten/sui/keypairs/ed25519';
+import { Secp256k1PublicKey } from '@mysten/sui/keypairs/secp256k1';
+import { Secp256r1PublicKey } from '@mysten/sui/keypairs/secp256r1';
 import { ZkLoginPublicIdentifier } from '@mysten/sui/zklogin';
 import { fromBase64, toBase64 } from '@mysten/sui/utils';
 
-// 工具函数：处理 33 字节带标志位的公钥，将其转换为 32 字节纯公钥
+// 工具函数：处理外部输入的 Base64 公钥 (修复 33 字节问题)
 function normalizeToPureEd25519(base64Str: string): Ed25519PublicKey {
   const bytes = fromBase64(base64Str);
-  // 如果是 33 字节且第一个字节是 0 (Ed25519 标志位)，则切除第一位
   const pureBytes = (bytes.length === 33 && bytes[0] === 0) ? bytes.slice(1) : bytes;
   if (pureBytes.length !== 32) {
     throw new Error(`公钥长度错误: 期望 32 字节，实际得到 ${pureBytes.length} 字节`);
@@ -16,24 +17,39 @@ function normalizeToPureEd25519(base64Str: string): Ed25519PublicKey {
   return new Ed25519PublicKey(pureBytes);
 }
 
-// 动态解析当前连接钱包公钥的助手函数
+// 终极钱包公钥解析器：通吃所有类型和长度规范
 function getWalletPublicKey(account: any) {
-  const pubKeyBytes = new Uint8Array(account.publicKey);
+  const originalBytes = new Uint8Array(account.publicKey);
   const targetAddress = account.address;
 
-  // 尝试解析为 Ed25519
+  // 某些钱包可能传过来 33 字节(包含标志位)，我们切出 32 字节的核心备用
+  const pureBytes = originalBytes.length === 33 ? originalBytes.slice(1) : originalBytes;
+
+  // 1. 尝试 Ed25519
   try {
-    const edKey = new Ed25519PublicKey(pubKeyBytes);
+    const edKey = new Ed25519PublicKey(pureBytes);
     if (edKey.toSuiAddress() === targetAddress) return edKey;
   } catch {}
 
-  // 尝试解析为 zkLogin
+  // 2. 尝试 Secp256k1
   try {
-    const zkKey = new ZkLoginPublicIdentifier(pubKeyBytes);
+    const secpKey = new Secp256k1PublicKey(pureBytes);
+    if (secpKey.toSuiAddress() === targetAddress) return secpKey;
+  } catch {}
+
+  // 3. 尝试 Secp256r1
+  try {
+    const r1Key = new Secp256r1PublicKey(pureBytes);
+    if (r1Key.toSuiAddress() === targetAddress) return r1Key;
+  } catch {}
+
+  // 4. 尝试 zkLogin (zkLogin 标识符字节较长，直接使用原始字节)
+  try {
+    const zkKey = new ZkLoginPublicIdentifier(originalBytes);
     if (zkKey.toSuiAddress() === targetAddress) return zkKey;
   } catch {}
 
-  throw new Error("无法识别当前钱包的公钥类型 (仅支持 Ed25519 和 zkLogin)");
+  throw new Error(`无法匹配当前钱包地址。底层字节长度为: ${originalBytes.length}`);
 }
 
 export function MultisigGenerator() {
@@ -57,14 +73,10 @@ export function MultisigGenerator() {
     }
 
     try {
-      // 1. 处理输入的两个 Base64 公钥 (自动修复 33 字节问题)
       const pubKey1 = normalizeToPureEd25519(pk1);
       const pubKey2 = normalizeToPureEd25519(pk2);
-
-      // 2. 获取钱包的公钥
       const walletPubKey = getWalletPublicKey(account);
 
-      // 3. 构建 2-of-3 多签
       const multiSigPublicKey = MultiSigPublicKey.fromPublicKeys({
         threshold: 2,
         publicKeys: [
@@ -74,13 +86,12 @@ export function MultisigGenerator() {
         ],
       });
 
-      // 4. 准备展示数据
       setResult({
         address: multiSigPublicKey.toSuiAddress(),
         keys: [
-          toBase64(walletPubKey.toRawBytes()), // 钱包公钥
-          toBase64(pubKey1.toRawBytes()),      // 输入 1 的纯公钥
-          toBase64(pubKey2.toRawBytes()),      // 输入 2 的纯公钥
+          toBase64(walletPubKey.toRawBytes()), // 钱包实际使用的公钥
+          toBase64(pubKey1.toRawBytes()),
+          toBase64(pubKey2.toRawBytes()),
         ]
       });
 
@@ -115,7 +126,7 @@ export function MultisigGenerator() {
         生成 2-of-3 多签账户
       </button>
 
-      {errorMsg && <p style={{ color: 'red' }}>{errorMsg}</p>}
+      {errorMsg && <p style={{ color: 'red', fontWeight: 'bold' }}>{errorMsg}</p>}
 
       {result && (
         <div style={{ backgroundColor: '#f0f9ff', padding: '20px', borderRadius: '8px', border: '1px solid #bae7ff' }}>
@@ -123,15 +134,15 @@ export function MultisigGenerator() {
           
           <div style={{ marginBottom: '15px' }}>
             <strong>多签地址 (Multisig Address):</strong>
-            <p style={{ wordBreak: 'break-all', background: '#fff', padding: '10px', borderRadius: '4px' }}>{result.address}</p>
+            <p style={{ wordBreak: 'break-all', background: '#fff', padding: '10px', borderRadius: '4px', border: '1px solid #ddd' }}>{result.address}</p>
           </div>
 
           <div>
-            <strong>参与公钥 (Pure Public Keys - Base64):</strong>
-            <ul style={{ fontSize: '13px' }}>
+            <strong>参与公钥 (Base64):</strong>
+            <ul style={{ fontSize: '13px', paddingLeft: '20px' }}>
               {result.keys.map((key, i) => (
-                <li key={i} style={{ wordBreak: 'break-all', marginBottom: '5px' }}>
-                  账户 {i + 1}: {key}
+                <li key={i} style={{ wordBreak: 'break-all', marginBottom: '8px' }}>
+                  <strong>账户 {i + 1} {i === 0 ? "(钱包端)" : ""}:</strong> <br/>{key}
                 </li>
               ))}
             </ul>
