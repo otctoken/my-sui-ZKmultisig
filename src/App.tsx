@@ -2,10 +2,16 @@ import { createNetworkConfig, SuiClientProvider, WalletProvider } from '@mysten/
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MultisigGenerator } from './components/MultisigGenerator';
 
-// 直接使用字符串 URL 替换 getFullnodeUrl，完美避开 TS 类型报错
+// 显式加上 network 字段，满足最新版 SDK 的严格类型检查
 const { networkConfig } = createNetworkConfig({
-  mainnet: { url: 'https://fullnode.mainnet.sui.io:443' },
-  testnet: { url: 'https://fullnode.testnet.sui.io:443' },
+  mainnet: { 
+    url: 'https://fullnode.mainnet.sui.io:443', 
+    network: 'mainnet' as const 
+  },
+  testnet: { 
+    url: 'https://fullnode.testnet.sui.io:443', 
+    network: 'testnet' as const 
+  },
 });
 
 const queryClient = new QueryClient();
