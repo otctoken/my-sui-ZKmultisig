@@ -3,16 +3,26 @@ import { useCurrentAccount, ConnectButton } from '@mysten/dapp-kit';
 import { MultiSigPublicKey } from '@mysten/sui/multisig';
 import { Ed25519PublicKey } from '@mysten/sui/keypairs/ed25519';
 import { Secp256k1PublicKey } from '@mysten/sui/keypairs/secp256k1';
-import { Secp256r1PublicKey } from '@mysten/sui/keypairs/secp256r1';
 import { ZkLoginPublicIdentifier } from '@mysten/sui/zklogin';
+import { fromBase64, toBase64 } from '@mysten/sui/utils';
 
-// 动态解析钱包公钥的“神机妙算”助手函数
+// 工具函数：处理 33 字节带标志位的公钥，将其转换为 32 字节纯公钥
+function normalizeToPureEd25519(base64Str: string): Ed25519PublicKey {
+  const bytes = fromBase64(base64Str);
+  // 如果是 33 字节且第一个字节是 0 (Ed25519 标志位)，则切除第一位
+  const pureBytes = (bytes.length === 33 && bytes[0] === 0) ? bytes.slice(1) : bytes;
+  if (pureBytes.length !== 32) {
+    throw new Error(`公钥长度错误: 期望 32 字节，实际得到 ${pureBytes.length} 字节`);
+  }
+  return new Ed25519PublicKey(pureBytes);
+}
+
+// 动态解析当前连接钱包公钥的助手函数
 function getWalletPublicKey(account: any) {
-  // 1. 解决 ReadonlyUint8Array 的类型报错，强制转换为普通 Uint8Array
   const pubKeyBytes = new Uint8Array(account.publicKey);
   const targetAddress = account.address;
 
-  // 2. 挨个尝试不同的加密方案，能对上地址的就是正确的！
+  // 尝试不同的解析器
   try {
     const edKey = new Ed25519PublicKey(pubKeyBytes);
     if (edKey.toSuiAddress() === targetAddress) return edKey;
@@ -23,47 +33,38 @@ function getWalletPublicKey(account: any) {
     if (zkKey.toSuiAddress() === targetAddress) return zkKey;
   } catch {}
 
-  try {
-    const secpKey = new Secp256k1PublicKey(pubKeyBytes);
-    if (secpKey.toSuiAddress() === targetAddress) return secpKey;
-  } catch {}
-
-  try {
-    const secp256r1Key = new Secp256r1PublicKey(pubKeyBytes);
-    if (secp256r1Key.toSuiAddress() === targetAddress) return secp256r1Key;
-  } catch {}
-
   throw new Error("无法识别当前钱包的公钥类型");
 }
 
 export function MultisigGenerator() {
   const account = useCurrentAccount();
+  const [pk1, setPk1] = useState('AHOz5DjgjI5LO3suU0btfcz9pNy7Ciu1EGNJbLbhL//e');
+  const [pk2, setPk2] = useState('AMryn+9Wh0qF7Nsn8r58KJYH9z6h/JCzWfEpwrWfAENb');
   
-  const [pk1, setPk1] = useState('');
-  const [pk2, setPk2] = useState('');
-  const [multisigAddress, setMultisigAddress] = useState('');
+  const [result, setResult] = useState<{
+    address: string;
+    keys: string[];
+  } | null>(null);
   const [errorMsg, setErrorMsg] = useState('');
 
   const generateMultisig = () => {
     setErrorMsg('');
-    setMultisigAddress('');
+    setResult(null);
 
     if (!account) {
-      setErrorMsg("请先连接 Sui 钱包");
-      return;
-    }
-    if (!pk1 || !pk2) {
-      setErrorMsg("请填写完整的公钥 1 和公钥 2");
+      setErrorMsg("请先连接 Sui 官方钱包");
       return;
     }
 
     try {
-      const pubKey1 = new Ed25519PublicKey(pk1);
-      const pubKey2 = new Ed25519PublicKey(pk2);
+      // 1. 处理输入的两个 Base64 公钥 (自动修复 33 字节问题)
+      const pubKey1 = normalizeToPureEd25519(pk1);
+      const pubKey2 = normalizeToPureEd25519(pk2);
 
-      // 使用我们写好的助手函数，完美拿到钱包的 PublicKey 对象
+      // 2. 获取钱包的公钥
       const walletPubKey = getWalletPublicKey(account);
 
+      // 3. 构建 2-of-3 多签
       const multiSigPublicKey = MultiSigPublicKey.fromPublicKeys({
         threshold: 2,
         publicKeys: [
@@ -73,55 +74,68 @@ export function MultisigGenerator() {
         ],
       });
 
-      setMultisigAddress(multiSigPublicKey.toSuiAddress());
+      // 4. 准备展示数据
+      setResult({
+        address: multiSigPublicKey.toSuiAddress(),
+        keys: [
+          toBase64(walletPubKey.toRawBytes()), // 钱包公钥
+          toBase64(pubKey1.toRawBytes()),      // 输入 1 的纯公钥
+          toBase64(pubKey2.toRawBytes()),      // 输入 2 的纯公钥
+        ]
+      });
 
     } catch (error: any) {
-      console.error(error);
-      setErrorMsg("生成失败，请检查输入的公钥格式是否正确。错误信息: " + error.message);
+      setErrorMsg("生成失败: " + error.message);
     }
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', marginTop: '30px' }}>
-      <div style={{ padding: '15px', border: '1px solid #ddd', borderRadius: '8px' }}>
-        <h3>1. 当前钱包账户 (权重: 1)</h3>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', padding: '20px' }}>
+      <div style={{ border: '1px solid #ddd', padding: '15px', borderRadius: '8px' }}>
+        <h3>1. 账户 1 (当前钱包)</h3>
         <ConnectButton />
-        {account && <p style={{ fontSize: '12px', color: 'gray' }}>当前连接: {account.address}</p>}
+        {account && <p style={{ fontSize: '12px', wordBreak: 'break-all' }}>地址: {account.address}</p>}
       </div>
 
-      <div style={{ padding: '15px', border: '1px solid #ddd', borderRadius: '8px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
-        <h3>2. 离线/传统私钥账户 (权重各: 1)</h3>
-        <div>
-          <label style={{ display: 'block', fontSize: '14px', marginBottom: '5px' }}>公钥 1 (Base64格式)</label>
-          <input 
-            type="text" value={pk1} onChange={(e) => setPk1(e.target.value)} 
-            placeholder="例如: d2FzaHViZXI..." 
-            style={{ width: '100%', padding: '8px', boxSizing: 'border-box' }}
-          />
-        </div>
-        <div>
-          <label style={{ display: 'block', fontSize: '14px', marginBottom: '5px' }}>公钥 2 (Base64格式)</label>
-          <input 
-            type="text" value={pk2} onChange={(e) => setPk2(e.target.value)} 
-            placeholder="例如: eHl6MTIzNDU..." 
-            style={{ width: '100%', padding: '8px', boxSizing: 'border-box' }}
-          />
-        </div>
+      <div style={{ border: '1px solid #ddd', padding: '15px', borderRadius: '8px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+        <h3>2. 账户 2 & 3 (外部公钥)</h3>
+        <input 
+          placeholder="输入公钥 1 (Base64)" 
+          value={pk1} onChange={(e) => setPk1(e.target.value)}
+          style={{ width: '100%', padding: '8px' }}
+        />
+        <input 
+          placeholder="输入公钥 2 (Base64)" 
+          value={pk2} onChange={(e) => setPk2(e.target.value)}
+          style={{ width: '100%', padding: '8px' }}
+        />
       </div>
 
-      <button 
-        onClick={generateMultisig} disabled={!account}
-        style={{ padding: '12px', fontSize: '16px', cursor: account ? 'pointer' : 'not-allowed', backgroundColor: account ? '#0071ED' : '#ccc', color: 'white', border: 'none', borderRadius: '8px' }}
-      >
-        生成多签地址
+      <button onClick={generateMultisig} style={{ padding: '12px', background: '#0071ef', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer' }}>
+        生成 2-of-3 多签账户
       </button>
 
       {errorMsg && <p style={{ color: 'red' }}>{errorMsg}</p>}
 
-      {multisigAddress && (
-        <div style={{ padding: '15px', backgroundColor: '#e6f7ff', border: '1px solid #91d5ff', borderRadius: '8px' }}>
-          <h4 style={{ margin: '0 0 10px 0', color: '#0050b3' }}>✅ 生成成功！你的 2-of-3 多签地址：</h4>
-          <code style={{ wordBreak: 'break-all', fontSize: '14px' }}>{multisigAddress}</code>
+      {result && (
+        <div style={{ backgroundColor: '#f0f9ff', padding: '20px', borderRadius: '8px', border: '1px solid #bae7ff' }}>
+          <h2 style={{ color: '#0050b3', marginTop: 0 }}>🎉 多签账户已生成</h2>
+          
+          <div style={{ marginBottom: '15px' }}>
+            <strong>多签地址 (Multisig Address):</strong>
+            <p style={{ wordBreak: 'break-all', background: '#fff', padding: '10px', borderRadius: '4px' }}>{result.address}</p>
+          </div>
+
+          <div>
+            <strong>参与公钥 (Pure Public Keys - Base64):</strong>
+            <ul style={{ fontSize: '13px' }}>
+              {result.keys.map((key, i) => (
+                <li key={i} style={{ wordBreak: 'break-all', marginBottom: '5px' }}>
+                  账户 {i + 1}: {key}
+                </li>
+              ))}
+            </ul>
+          </div>
         </div>
       )}
     </div>
