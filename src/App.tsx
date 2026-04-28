@@ -1,13 +1,13 @@
 import { createNetworkConfig, SuiClientProvider, WalletProvider } from '@mysten/dapp-kit';
-import { getFullnodeUrl } from '@mysten/sui/client';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MultisigGenerator } from './components/MultisigGenerator';
 
-// 配置 Sui 网络 (默认 Mainnet)
+// 直接使用字符串 URL 替换 getFullnodeUrl，完美避开 TS 类型报错
 const { networkConfig } = createNetworkConfig({
-  mainnet: { url: getFullnodeUrl('mainnet') },
-  testnet: { url: getFullnodeUrl('testnet') },
+  mainnet: { url: 'https://fullnode.mainnet.sui.io:443' },
+  testnet: { url: 'https://fullnode.testnet.sui.io:443' },
 });
+
 const queryClient = new QueryClient();
 
 export default function App() {
